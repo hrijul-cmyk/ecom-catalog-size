@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+/out/
+/tmp/
+*.local.csv
+
+# Real prospect data (StoreLeads slices contain emails/phones) — never commit
+test/fixtures/belgium-*.csv
+*.enriched.csv
