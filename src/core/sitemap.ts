@@ -30,31 +30,52 @@ export interface SitemapResult {
   truncated: boolean;
 }
 
-/** Discover and read a domain's sitemap. Returns null if none is reachable. */
+/** Discover and read a domain's sitemap. Returns null only if genuinely none is reachable. */
 export async function fetchSitemap(domain: string): Promise<SitemapResult | null> {
-  const sitemapUrl = await discoverSitemapUrl(domain);
-  if (!sitemapUrl) return null;
-  return readSitemap(sitemapUrl);
+  const { url, blocked } = await discoverSitemapUrl(domain);
+  if (url) return readSitemap(url);
+  // No sitemap URL found. If discovery was blocked (403/429), say so — these are usually
+  // real stores behind a WAF, not dead domains; the caller marks them `blocked`, not `none`.
+  if (blocked) return { urls: [], sourceUrl: "", wasIndex: false, blocked: true, truncated: false };
+  return null;
+}
+
+// Conventional sitemap locations, tried in order when robots.txt has no Sitemap line.
+// Magento commonly serves at /sitemap/sitemap.xml, /pub/sitemap.xml, or /media/sitemap.xml,
+// so plain /sitemap.xml alone silently misses large Magento catalogs.
+const FALLBACK_PATHS = ["/sitemap.xml", "/sitemap/sitemap.xml", "/pub/sitemap.xml", "/media/sitemap.xml"];
+
+const BLOCK_STATUSES = new Set([401, 403, 429, 503]);
+
+export interface SitemapDiscovery {
+  url: string | null;
+  /** True if robots.txt or a fallback probe was blocked (403/429/…) rather than simply 404. */
+  blocked: boolean;
 }
 
 /** Find the sitemap URL via robots.txt, falling back to conventional locations. */
-export async function discoverSitemapUrl(domain: string): Promise<string | null> {
+export async function discoverSitemapUrl(domain: string): Promise<SitemapDiscovery> {
+  let blocked = false;
   for (const base of baseUrls(domain)) {
     try {
       const res = await fetchText(`${base}/robots.txt`, { timeoutMs: 10_000 });
+      if (BLOCK_STATUSES.has(res.status)) blocked = true;
       if (res.ok) {
         const m = res.text.match(/^\s*sitemap:\s*(\S+)/im);
-        if (m) return m[1].trim();
+        // Resolve against the base so a relative "Sitemap: /feeds/sitemap.xml" works.
+        if (m) return { url: new URL(m[1].trim(), `${base}/`).toString(), blocked };
       }
-      // robots.txt had no Sitemap line — try the conventional default on this base.
-      const fallback = `${base}/sitemap.xml`;
-      const head = await httpRequest(fallback, { timeoutMs: 10_000, maxBytes: 5 * 1024 * 1024 });
-      if (head.ok || head.oversize) return fallback;
+      // robots.txt had no Sitemap line — probe conventional locations on this base.
+      for (const path of FALLBACK_PATHS) {
+        const head = await httpRequest(`${base}${path}`, { timeoutMs: 10_000, maxBytes: 5 * 1024 * 1024 });
+        if (BLOCK_STATUSES.has(head.status)) blocked = true;
+        if (head.ok || head.oversize) return { url: `${base}${path}`, blocked };
+      }
     } catch {
       // try next base
     }
   }
-  return null;
+  return { url: null, blocked };
 }
 
 /** Read a sitemap URL, expanding a sitemap index one level deep. */

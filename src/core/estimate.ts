@@ -73,6 +73,20 @@ async function runLadder(domain: string, platform?: PlatformHint): Promise<Catal
     ]
       .filter(Boolean)
       .join(";");
+
+    // Sitemap had URLs but none matched a product pattern → we can't read the
+    // catalog, which is "unknown", NOT "0 products" (a false-empty store).
+    if (filtered.count === 0) {
+      return {
+        productCount: null,
+        method: sm.wasIndex ? "sitemap_index" : "sitemap",
+        confidence: "none",
+        totalUrls: sm.urls.length,
+        sourceUrl: sm.sourceUrl,
+        error: `unreadable:patterns-matched-0${note ? ";" + note : ""}`,
+      };
+    }
+
     return {
       productCount: filtered.count,
       method: sm.wasIndex ? "sitemap_index" : "sitemap",
