@@ -35,3 +35,32 @@ Append-only build log. Newest at the bottom.
   — a testing artifact, not a code bug; real lists of distinct domains don't hit it.
 - **M10 Calibration** — spot-check table in README; accuracy: open-API exact, sitemap ~±15%.
 - **M11 Docs** — README, decisions.md, runbook.md, PRD.md, this log, `.claude/CLAUDE.md`.
+
+## 2026-06-02 — 500-domain test + Phase 2 (harden + productionize)
+
+Ran the tool on a 500-domain mixed-platform list (`test.csv`). ~63% usable; an independent
+19-store truth-test confirmed **high-confidence = 100% accurate** and that the "low" estimates were
+the right order of magnitude (even badu.hr's 1.6M was real). Surfaced a precise fix list. Branch:
+`phase2-harden-api`.
+
+- **A1 Magento sitemap discovery** — probe `/sitemap/sitemap.xml`, `/pub/…`, `/media/…` after
+  `/sitemap.xml`. `magiswall.hr` resolves; path-fallback verified.
+- **A2 Relative sitemap URLs** — resolve robots.txt `Sitemap:` value against base (`new URL(v, base)`).
+- **Bonus: blocked-vs-none** — discovery now flags 403/429 as `blocked`. The truth-test showed the
+  Magento "none" misses (fashionandfriends ~120k, ecipele ~48k) are mostly WAF-blocked *real* stores,
+  not dead domains — now honestly labeled `blocked` (re-run from clean IP). Did NOT add Googlebot
+  spoofing (evasion).
+- **A3 Magento over-count** — broadened `STATIC` with category/brand container slugs (EN + Croatian:
+  brandovi, kategorija, …) so brand/category pages aren't counted as products.
+- **A4 Zero→unknown** — sitemap with URLs but 0 product matches now returns `null`/`none`
+  (`unreadable:patterns-matched-0`), not a false `0`. Verified: `proteka.hr`.
+- **A5 `--retry-unresolved`** — carries over resolved rows from a prior enriched CSV, re-probes only
+  blocked/none/empty. Verified: 2 carried / 2 re-probed on a mini run.
+- **B1 HTTP API** (`src/server.ts`, Express) — GET/POST `/estimate` + `/health`, flat snake_case
+  payload, optional bearer auth. Verified live: health, GET/POST, 400 on missing domain, 401 gate,
+  and the compiled `npm run build && npm run start` path.
+- **B2 Railway** — `railway.toml` (nixpacks, healthcheck `/health`), `start` script, `.env.example`.
+- **B3 Docs** — `docs/integrations.md` (Clay HTTP column + Deepline generic_http + Railway deploy);
+  README API + `--retry-unresolved` sections.
+- Regression: `tsc --noEmit` clean; vrutak/chipoteka/vulkal counts unchanged. (Shopify throttle has
+  since cooled — mylapiel/istyle resolve again.)

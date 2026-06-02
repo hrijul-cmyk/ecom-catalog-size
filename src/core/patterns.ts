@@ -12,9 +12,14 @@
 import { hostOf } from "./util.js";
 import type { Confidence } from "./types.js";
 
-/** Pages that are never products — removed before pattern matching. */
+/**
+ * Pages that are never products — removed before pattern matching. Includes
+ * category/brand *container* slugs (English + Croatian, since our lists skew .hr)
+ * because Magento/PrestaShop sitemaps mix brand & category landing pages in with
+ * products and the bare `.html` pattern would otherwise count them as products.
+ */
 export const STATIC =
-  /\/(search|contact(us)?|news|blog|about|account|login|register|cart|checkout|wishlist|compare|faq|terms|privacy|shipping|returns|sitemap|page|pages|category|categories|brand|brands|manufacturer|tag|tags)(\/|$|\?|\.)/i;
+  /\/(search|contact(us)?|news|blog|about|account|login|register|cart|checkout|wishlist|compare|faq|terms|privacy|shipping|returns|sitemap|page|pages|category|categories|catalog|collections?|brand|brands|brandovi|brendovi|manufacturer|proizvod[jd]?a[cč]i|kategorij[ae]|tag|tags)(\/|$|\?|\.)/i;
 
 export interface PlatformPatterns {
   /** Regexes that match a product-URL slug/path. Any match → product. */
@@ -56,6 +61,7 @@ export function platformKey(platform: string | null | undefined): string | null 
   const p = platform.toLowerCase();
   if (p.includes("shopify")) return "shopify";
   if (p.includes("woo")) return "woocommerce";
+  if (p.includes("spree")) return "spree";
   if (p.includes("opencart")) return "opencart";
   if (p.includes("nopcommerce")) return "nopcommerce";
   if (p.includes("magento") || p.includes("adobe commerce")) return "magento";

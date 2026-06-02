@@ -72,6 +72,27 @@ The tool **preserves all original columns** and appends:
 The intended workflow is to **review only the `low` / `blocked` / `none` rows** — the
 `high`/`medium` rows are reliable.
 
+### Re-running blocked/throttled rows
+Some stores rate-limit your IP (especially after a big run). Re-run only the unresolved rows from a
+clean connection, carrying the good rows over unchanged:
+```bash
+npm run catalog-size run leads.csv --retry-unresolved leads.enriched.csv --out leads.v2.csv
+```
+
+## HTTP API (Clay / Deepline)
+
+The same engine is exposed as a one-domain-in → JSON-out endpoint, for use as a Clay HTTP column or
+a Deepline `generic_http` action:
+```bash
+npm run serve         # local: GET/POST /estimate, GET /health  (PORT, default 8080)
+```
+```bash
+curl 'http://localhost:8080/estimate?domain=wineandmore.com&platform=WooCommerce'
+# → {"domain":"wineandmore.com","product_count":1407,"method":"woo_store_api","confidence":"high",...}
+```
+Optional auth: set `CATALOG_API_KEY` to require `Authorization: Bearer <key>`. Deploy + full Clay /
+Deepline wiring: see [docs/integrations.md](docs/integrations.md). Railway-ready (`railway.toml`).
+
 ## Accuracy (spot-check)
 
 | Domain | Platform | Method | Count | Notes |

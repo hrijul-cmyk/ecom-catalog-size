@@ -15,7 +15,7 @@ import { estimateCatalog } from "./core/estimate.js";
 import { normalizeDomain } from "./core/util.js";
 import type { CatalogEstimate } from "./core/types.js";
 
-const DOMAIN_COLS = ["domain", "website", "url", "company_domain", "site"];
+const DOMAIN_COLS = ["domain", "final_domain", "website", "url", "company_domain", "site"];
 const PLATFORM_COLS = ["platform", "ecommerce_platform", "cms"];
 const OUT_COLS = {
   count: "cat_product_count",
@@ -69,6 +69,7 @@ async function runCsv(args: string[]) {
   const concurrency = Number(optValue(args, "--concurrency")) || defaultConcurrency();
   const domainCol = optValue(args, "--domain-col");
   const platformCol = optValue(args, "--platform-col");
+  const retryPrev = optValue(args, "--retry-unresolved");
 
   const { headers, rows } = readCsv(input);
   if (!rows.length) return fail("input CSV has no rows");
@@ -77,19 +78,40 @@ async function runCsv(args: string[]) {
   if (!dCol) return fail(`no domain column found (looked for: ${DOMAIN_COLS.join(", ")}). Use --domain-col.`);
   const pCol = platformCol ?? findCol(headers, PLATFORM_COLS);
 
+  // Retry mode: carry over already-resolved rows from a prior enriched CSV, and
+  // only re-probe the ones that came back blocked/none/empty.
+  let resolved: Map<string, Row> | null = null;
+  if (retryPrev) {
+    if (!existsSync(retryPrev)) return fail(`--retry-unresolved file not found: ${retryPrev}`);
+    resolved = loadResolved(retryPrev);
+  }
+
   console.log(`Reading ${rows.length} rows from ${input}`);
   console.log(`  domain column: ${dCol}${pCol ? ` | platform column: ${pCol}` : " | no platform column (will route by probe)"}`);
   console.log(`  concurrency: ${concurrency}`);
+  if (resolved) console.log(`  retry mode: carrying over ${resolved.size} resolved rows from ${retryPrev}; re-probing the rest`);
 
   const start = Date.now();
   const limit = pLimit(concurrency);
   let done = 0;
+  let carried = 0;
   const tick = Math.max(1, Math.floor(rows.length / 20));
 
   await Promise.all(
     rows.map((row) =>
       limit(async () => {
         const domain = pick(row, dCol);
+        const key = domain ? normalizeDomain(domain) : "";
+
+        // Carry over a previously-resolved row without re-probing.
+        if (resolved && key && resolved.has(key)) {
+          Object.assign(row, resolved.get(key));
+          carried++;
+          done++;
+          if (done % tick === 0 || done === rows.length) process.stdout.write(`  ...${done}/${rows.length}\n`);
+          return;
+        }
+
         const platform = pCol ? pick(row, pCol) : "";
         const est: CatalogEstimate = domain
           ? await estimateCatalog(domain, platform || null)
@@ -106,7 +128,30 @@ async function runCsv(args: string[]) {
   writeCsv(out, headers, rows);
   const secs = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`\nWrote ${rows.length} rows → ${out} (${secs}s)`);
+  if (resolved) console.log(`  carried over: ${carried} | re-probed: ${rows.length - carried}`);
   printSummary(rows);
+}
+
+/**
+ * Load already-resolved rows from a prior enriched CSV, keyed by normalized domain.
+ * "Resolved" = has a product count AND confidence high/medium/low. Rows that were
+ * blocked/none/empty are omitted so they get re-probed.
+ */
+function loadResolved(prevPath: string): Map<string, Row> {
+  const { headers, rows } = readCsv(prevPath);
+  const dCol = findCol(headers, DOMAIN_COLS);
+  const map = new Map<string, Row>();
+  if (!dCol) return map;
+  const GOOD = new Set(["high", "medium", "low"]);
+  for (const r of rows) {
+    const dom = pick(r, dCol);
+    if (!dom) continue;
+    if (r[OUT_COLS.count] === "" || !GOOD.has(r[OUT_COLS.confidence])) continue;
+    const catCols: Row = {};
+    for (const c of Object.values(OUT_COLS)) catCols[c] = r[c] ?? "";
+    map.set(normalizeDomain(dom), catCols);
+  }
+  return map;
 }
 
 function applyResult(row: Row, est: CatalogEstimate) {
@@ -150,16 +195,20 @@ Usage:
   catalog-size check <domain> [domain...]    Ad-hoc check, printed to stdout
 
 Options (run):
-  --out <path>           Output CSV (default: <input>.enriched.csv)
-  --concurrency <n>      Parallel domains (default: 10, or $CATALOG_CONCURRENCY)
-  --domain-col <name>    Domain column override (auto: ${DOMAIN_COLS.join(", ")})
-  --platform-col <name>  Platform column override (auto: ${PLATFORM_COLS.join(", ")})
+  --out <path>              Output CSV (default: <input>.enriched.csv)
+  --concurrency <n>         Parallel domains (default: 10, or $CATALOG_CONCURRENCY)
+  --domain-col <name>       Domain column override (auto: ${DOMAIN_COLS.join(", ")})
+  --platform-col <name>     Platform column override (auto: ${PLATFORM_COLS.join(", ")})
+  --retry-unresolved <csv>  Carry over resolved rows from a prior enriched CSV and
+                            only re-probe the blocked/none/empty ones (e.g. re-run
+                            throttled rows from a clean IP)
 
 Appended columns: ${Object.values(OUT_COLS).join(", ")}
 
 Examples:
   catalog-size check mylapiel.com chipoteka.hr
-  catalog-size run leads.csv --out enriched.csv --concurrency 12`);
+  catalog-size run leads.csv --out enriched.csv --concurrency 12
+  catalog-size run leads.csv --retry-unresolved leads.enriched.csv --out leads.v2.csv`);
 }
 
 main().catch((e) => fail(e instanceof Error ? e.message : String(e)));

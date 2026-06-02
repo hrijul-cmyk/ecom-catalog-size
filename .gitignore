@@ -7,6 +7,7 @@ dist/
 /tmp/
 *.local.csv
 
-# Real prospect data (StoreLeads slices contain emails/phones) — never commit
+# Real prospect data — never commit (domain/platform lists, StoreLeads slices w/ emails/phones)
 test/fixtures/belgium-*.csv
+/test.csv
 *.enriched.csv
